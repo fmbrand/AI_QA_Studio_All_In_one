@@ -11,8 +11,9 @@ import { useTheme, type Theme } from "@/components/providers/theme-provider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, Input, Select } from "@/components/ui/form";
+import { Skeleton } from "@/components/ui/states";
 import { api, errorMessage } from "@/lib/api";
-import { keys } from "@/lib/queries";
+import { keys, useAIStatus } from "@/lib/queries";
 import type { User } from "@/lib/types";
 
 export default function SettingsPage() {
@@ -23,6 +24,7 @@ export default function SettingsPage() {
   const [name, setName] = useState(user?.name ?? "");
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
+  const ai = useAIStatus();
 
   const saveName = useMutation({
     mutationFn: () => api.patch<User>("/me", { name: name.trim() }),
@@ -117,11 +119,32 @@ export default function SettingsPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Integrations and AI providers</CardTitle>
+            <CardTitle>AI and document processing</CardTitle>
             <CardDescription>
-              Figma, GitHub and AI provider settings arrive with the phases that use them (Phases 2 to 5).
+              Configured on the server by an administrator (backend environment). API keys are never shown here.
             </CardDescription>
           </CardHeader>
+          <CardContent>
+            {ai.isPending ? (
+              <Skeleton className="h-16" />
+            ) : ai.data ? (
+              <dl className="grid gap-2 text-sm sm:grid-cols-[10rem_1fr]">
+                <dt className="text-muted-foreground">Language model</dt>
+                <dd>
+                  {ai.data.llm.configured
+                    ? `${ai.data.llm.provider}${ai.data.llm.model ? ` · ${ai.data.llm.model}` : ""}`
+                    : "Not configured — AI extraction is off"}
+                </dd>
+                <dt className="text-muted-foreground">Embeddings</dt>
+                <dd>
+                  {ai.data.embeddings.provider} · {ai.data.embeddings.model}
+                </dd>
+                <dt className="text-muted-foreground">OCR</dt>
+                <dd>{ai.data.ocr.available ? `Tesseract (${ai.data.ocr.languages})` : "Not installed — scanned pages and images are not read"}</dd>
+              </dl>
+            ) : null}
+            <p className="mt-3 text-xs text-muted-foreground">Figma and GitHub integrations arrive in Phases 3 to 5.</p>
+          </CardContent>
         </Card>
       </div>
     </>

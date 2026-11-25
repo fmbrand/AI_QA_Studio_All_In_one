@@ -4,6 +4,7 @@ import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 
 import { api } from "./api";
 import type {
+  AIStatus,
   Activity,
   Dashboard,
   DocumentDetail,
@@ -15,6 +16,9 @@ import type {
   Project,
   ProjectDocument,
   ProjectStatus,
+  Requirement,
+  RequirementDetail,
+  RequirementDiff,
   Role,
 } from "./types";
 
@@ -32,6 +36,13 @@ export const keys = {
   extractions: (id: string, docId: string) => ["project", id, "document", docId, "extractions"] as const,
   activity: (id: string) => ["project", id, "activity"] as const,
   jobs: (id: string) => ["project", id, "jobs"] as const,
+  job: (jobId: string) => ["job", jobId] as const,
+  aiStatus: ["ai-status"] as const,
+  requirements: (id: string, filters: Record<string, string | undefined> = {}) =>
+    ["project", id, "requirements", filters] as const,
+  requirement: (id: string, reqId: string) => ["project", id, "requirement", reqId] as const,
+  requirementDiff: (id: string, reqId: string, a: number, b: number) =>
+    ["project", id, "requirement", reqId, "diff", a, b] as const,
 };
 
 function qs(params: Record<string, string | undefined>): string {
@@ -111,4 +122,47 @@ export const useActivity = (id: string) =>
     initialPageParam: undefined as string | undefined,
     queryFn: async ({ pageParam }) => api.page<Activity[]>(`/projects/${id}/activity${qs({ cursor: pageParam, limit: "30" })}`),
     getNextPageParam: (last) => last.meta.page?.next_cursor ?? undefined,
+  });
+
+export const useAIStatus = () =>
+  useQuery({ queryKey: keys.aiStatus, queryFn: ({ signal }) => api.get<AIStatus>("/ai/status", signal), staleTime: 60_000 });
+
+/** Polls a job every 2 s until it finishes. */
+export const useJob = (jobId: string | null) =>
+  useQuery({
+    queryKey: keys.job(jobId ?? ""),
+    queryFn: ({ signal }) => api.get<Job>(`/jobs/${jobId}`, signal),
+    enabled: !!jobId,
+    refetchInterval: (query) =>
+      query.state.data && ["succeeded", "failed", "cancelled"].includes(query.state.data.status) ? false : 2000,
+  });
+
+export interface RequirementFilters {
+  status?: string;
+  type?: string;
+  priority?: string;
+  module_id?: string;
+  q?: string;
+}
+
+export const useRequirements = (id: string, filters: RequirementFilters = {}) =>
+  useQuery({
+    queryKey: keys.requirements(id, { ...filters }),
+    queryFn: ({ signal }) =>
+      api.get<Requirement[]>(`/projects/${id}/requirements${qs({ ...filters, limit: "200" })}`, signal),
+  });
+
+export const useRequirement = (id: string, reqId: string | null) =>
+  useQuery({
+    queryKey: keys.requirement(id, reqId ?? ""),
+    queryFn: ({ signal }) => api.get<RequirementDetail>(`/projects/${id}/requirements/${reqId}`, signal),
+    enabled: !!reqId,
+  });
+
+export const useRequirementDiff = (id: string, reqId: string, a: number | null, b: number | null) =>
+  useQuery({
+    queryKey: keys.requirementDiff(id, reqId, a ?? 0, b ?? 0),
+    queryFn: ({ signal }) =>
+      api.get<RequirementDiff>(`/projects/${id}/requirements/${reqId}/diff?from=${a}&to=${b}`, signal),
+    enabled: a !== null && b !== null,
   });

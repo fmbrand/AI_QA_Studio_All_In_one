@@ -135,6 +135,7 @@ export interface ProjectDocument {
 
 export interface DocumentDetail extends ProjectDocument {
   versions: DocumentVersion[];
+  index: DocumentIndex | null;
 }
 
 export interface Extraction {
@@ -183,7 +184,137 @@ export interface Dashboard {
     archived_projects: number;
     documents: number;
     modules: number;
+    requirements: number;
+    approved_requirements: number;
   };
   recent_activity: Activity[];
   recent_jobs: Job[];
+}
+
+// ---- Phase 2: context engine and requirements -------------------------------------------------
+
+export type RequirementType =
+  | "functional"
+  | "non_functional"
+  | "business_rule"
+  | "user_role"
+  | "permission"
+  | "validation"
+  | "dependency"
+  | "workflow"
+  | "acceptance_criteria"
+  | "constraint";
+export type Priority = "critical" | "high" | "medium" | "low";
+export type RequirementStatus = "draft" | "approved" | "rejected";
+
+export interface SourceRef {
+  document_id: string;
+  document_version_id: string;
+  document_title: string;
+  chunk_id: string | null;
+  page: number | null;
+  sheet: string | null;
+  char_start: number;
+  char_end: number;
+  quote: string;
+}
+
+export interface RequirementVersion {
+  id: string;
+  version: number;
+  type: RequirementType;
+  title: string;
+  description: string;
+  module_id: string | null;
+  feature: string | null;
+  user_role: string | null;
+  priority: Priority;
+  acceptance_criteria: string[];
+  source_refs: SourceRef[];
+  origin: "ai" | "manual" | "edit";
+  confidence: "high" | "medium" | "low" | null;
+  change_reason: string | null;
+  created_by: string;
+  created_at: string;
+}
+
+export interface Requirement {
+  id: string;
+  project_id: string;
+  key: string;
+  status: RequirementStatus;
+  current_version_no: number;
+  approved_version_no: number | null;
+  possible_duplicate_of: string | null;
+  possible_duplicate_key: string | null;
+  rejection_reason: string | null;
+  reviewed_at: string | null;
+  created_at: string;
+  updated_at: string;
+  current: RequirementVersion;
+}
+
+export interface RequirementDetail extends Requirement {
+  versions: RequirementVersion[];
+}
+
+export interface RequirementInput {
+  type: RequirementType;
+  title: string;
+  description: string;
+  module_id: string | null;
+  feature: string | null;
+  user_role: string | null;
+  priority: Priority;
+  acceptance_criteria: string[];
+}
+
+export interface RequirementDiff {
+  from_version: number;
+  to_version: number;
+  changes: { field: string; before: unknown; after: unknown }[];
+  description_diff: string[];
+}
+
+export interface ContextHit {
+  chunk_id: string;
+  document_id: string;
+  document_version_id: string;
+  document_title: string;
+  document_version: number;
+  module_id: string | null;
+  page: number | null;
+  sheet: string | null;
+  char_start: number;
+  char_end: number;
+  content: string;
+  score: number;
+  similarity: number | null;
+  lexical_rank: number | null;
+}
+
+export interface AIStatus {
+  llm: { configured: boolean; provider: string; model: string };
+  embeddings: { provider: string; model: string; dimensions: number };
+  ocr: { available: boolean; languages: string };
+}
+
+export interface DocumentIndex {
+  chunk_count: number;
+  char_count: number;
+  warnings: string[];
+  ocr_pages: number[];
+  pages: number | null;
+}
+
+export interface ExtractionResult {
+  created: number;
+  keys: string[];
+  discarded_uncited: number;
+  dropped_citations: number;
+  merged_duplicates: number;
+  possible_duplicates: number;
+  open_questions: string[];
+  model_calls: number;
+  windows: number;
 }

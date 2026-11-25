@@ -54,7 +54,7 @@ test("register, create a project, add a module, upload a document and see it per
   await page.getByRole("dialog").getByRole("button", { name: /^Upload/ }).click();
   const row = page.getByRole("row", { name: /booking-rules/ });
   await expect(row).toBeVisible();
-  await expect(row.getByText("Text extracted")).toBeVisible({ timeout: 30_000 });
+  await expect(row.getByText("Indexed")).toBeVisible({ timeout: 30_000 });
 
   await row.getByRole("button", { name: "booking-rules" }).click();
   await expect(page.getByText("A customer can book an available time slot.")).toBeVisible();

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Download, Trash2, Upload } from "lucide-react";
+import { Download, RefreshCw, Trash2, Upload } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -90,6 +90,15 @@ export function DocumentDialog({ projectId, documentId, modules, canEdit, onClos
       invalidate();
       toast.success("Document deleted");
       onClose();
+    },
+    onError: (err) => toast.error(errorMessage(err)),
+  });
+
+  const reprocess = useMutation({
+    mutationFn: () => api.post(`/projects/${projectId}/documents/${documentId}/reprocess`),
+    onSuccess: () => {
+      invalidate();
+      toast.success("Reprocessing started");
     },
     onError: (err) => toast.error(errorMessage(err)),
   });
@@ -239,10 +248,30 @@ export function DocumentDialog({ projectId, documentId, modules, canEdit, onClos
             </section>
 
             <section aria-label="Extracted text" className="grid gap-2">
-              <h3 className="text-sm font-semibold">Extracted text</h3>
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="text-sm font-semibold">Extracted text</h3>
+                {canEdit && ["processed", "stored", "failed"].includes(d!.current_version?.processing_status ?? "") && (
+                  <Button size="sm" variant="ghost" loading={reprocess.isPending} onClick={() => reprocess.mutate()}>
+                    <RefreshCw />
+                    Reprocess
+                  </Button>
+                )}
+              </div>
+              {d!.index && (
+                <p className="text-xs text-muted-foreground">
+                  {d!.index.chunk_count} searchable passage{d!.index.chunk_count === 1 ? "" : "s"}
+                  {d!.index.pages ? ` · ${d!.index.pages} page${d!.index.pages === 1 ? "" : "s"}` : ""}
+                  {d!.index.ocr_pages.length > 0 && ` · OCR used on page ${d!.index.ocr_pages.join(", ")}`}
+                </p>
+              )}
+              {d!.index?.warnings.map((w) => (
+                <p key={w} className="rounded-md border border-warning/50 bg-warning/10 px-3 py-2 text-xs">
+                  {w}
+                </p>
+              ))}
               {extractions.isPending ? (
                 <Skeleton className="h-24" />
-              ) : latestText ? (
+              ) : latestText?.text ? (
                 <>
                   <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-md border bg-muted/40 p-3 font-mono text-xs">
                     {latestText.text.slice(0, 20000)}
@@ -255,9 +284,9 @@ export function DocumentDialog({ projectId, documentId, modules, canEdit, onClos
               ) : (
                 <p className="text-sm text-muted-foreground">
                   {d!.current_version?.processing_status === "stored"
-                    ? "Stored. Text extraction for PDF, Word, Excel and images arrives with the Phase 2 context engine."
+                    ? "No text could be read from this file. Scanned pages and images need OCR (Tesseract) on the server; reprocess after it is installed."
                     : d!.current_version?.processing_status === "failed"
-                      ? "Processing failed. Upload the file again as a new version."
+                      ? "Processing failed. Upload the file again as a new version, or reprocess it."
                       : "Processing… this updates automatically."}
                 </p>
               )}

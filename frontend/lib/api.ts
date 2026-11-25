@@ -83,11 +83,12 @@ export interface RequestOptions {
   body?: unknown;
   form?: FormData;
   ifMatch?: number;
+  headers?: Record<string, string>;
   signal?: AbortSignal;
 }
 
 async function send(path: string, opts: RequestOptions): Promise<Response> {
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { ...opts.headers };
   if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
   if (opts.ifMatch !== undefined) headers["If-Match"] = `"${opts.ifMatch}"`;
   let body: BodyInit | undefined;
@@ -125,7 +126,8 @@ export async function request<T>(path: string, opts: RequestOptions = {}): Promi
 export const api = {
   get: <T>(path: string, signal?: AbortSignal) => request<T>(path, { signal }).then((r) => r.data),
   page: <T>(path: string) => request<T>(path),
-  post: <T>(path: string, body?: unknown) => request<T>(path, { method: "POST", body }).then((r) => r.data),
+  post: <T>(path: string, body?: unknown, headers?: Record<string, string>) =>
+    request<T>(path, { method: "POST", body, headers }).then((r) => r.data),
   upload: <T>(path: string, form: FormData) => request<T>(path, { method: "POST", form }).then((r) => r.data),
   patch: <T>(path: string, body: unknown, ifMatch?: number) =>
     request<T>(path, { method: "PATCH", body, ifMatch }).then((r) => r.data),

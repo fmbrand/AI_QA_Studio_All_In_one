@@ -1,7 +1,15 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 
-import type { DocumentKind, Platform, ProcessingStatus, RoleKey } from "./types";
+import type {
+  DocumentKind,
+  Platform,
+  Priority,
+  ProcessingStatus,
+  RequirementStatus,
+  RequirementType,
+  RoleKey,
+} from "./types";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -41,8 +49,8 @@ export const KIND_LABELS: Record<DocumentKind, string> = {
 export const PROCESSING_LABELS: Record<ProcessingStatus, string> = {
   queued: "Queued",
   processing: "Processing",
-  processed: "Text extracted",
-  stored: "Stored",
+  processed: "Indexed",
+  stored: "No text found",
   failed: "Failed",
 };
 
@@ -102,4 +110,44 @@ export function parseTechStack(value: string): string[] {
 export function fileExtension(name: string): string {
   const dot = name.lastIndexOf(".");
   return dot >= 0 ? name.slice(dot).toLowerCase() : "";
+}
+
+export const REQUIREMENT_TYPE_LABELS: Record<RequirementType, string> = {
+  functional: "Functional",
+  non_functional: "Non-functional",
+  business_rule: "Business rule",
+  user_role: "User role",
+  permission: "Permission",
+  validation: "Validation",
+  dependency: "Dependency",
+  workflow: "Workflow",
+  acceptance_criteria: "Acceptance criteria",
+  constraint: "Constraint",
+};
+
+export const PRIORITY_LABELS: Record<Priority, string> = {
+  critical: "Critical",
+  high: "High",
+  medium: "Medium",
+  low: "Low",
+};
+
+export const REQUIREMENT_STATUS_LABELS: Record<RequirementStatus, string> = {
+  draft: "Draft",
+  approved: "Approved",
+  rejected: "Rejected",
+};
+
+/** One acceptance criterion per non-empty line. */
+export function parseLines(value: string): string[] {
+  return value
+    .split("\n")
+    .map((l) => l.replace(/^\s*[-*•]\s*/, "").trim())
+    .filter(Boolean);
+}
+
+export function sourceLocation(ref: { page: number | null; sheet: string | null }): string {
+  if (ref.page) return `page ${ref.page}`;
+  if (ref.sheet) return `sheet ${ref.sheet}`;
+  return "";
 }

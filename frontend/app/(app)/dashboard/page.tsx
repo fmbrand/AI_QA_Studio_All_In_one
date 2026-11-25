@@ -1,6 +1,6 @@
 "use client";
 
-import { Archive, FileText, FolderKanban, Layers, Plus } from "lucide-react";
+import { Archive, CheckCircle2, ClipboardList, FileText, FolderKanban, Layers, Plus } from "lucide-react";
 import Link from "next/link";
 
 import { PageHeader } from "@/components/layout/app-shell";
@@ -28,7 +28,10 @@ function Stat({ label, value, icon: Icon }: { label: string; value: number; icon
   );
 }
 
-const JOB_LABELS: Record<string, string> = { document_ingest: "Document processing" };
+const JOB_LABELS: Record<string, string> = {
+  document_ingest: "Document indexing",
+  requirement_extraction: "Requirement extraction (AI)",
+};
 
 export default function DashboardPage() {
   const { user } = useAuth();
@@ -55,15 +58,17 @@ export default function DashboardPage() {
         <ErrorState error={dashboard.error} onRetry={() => dashboard.refetch()} />
       ) : (
         <div className="grid gap-6">
-          <section aria-label="Totals" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <section aria-label="Totals" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {dashboard.isPending ? (
-              Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="h-24" />)
+              Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-24" />)
             ) : (
               <>
                 <Stat label="Active projects" value={dashboard.data.totals.active_projects} icon={FolderKanban} />
                 <Stat label="Archived projects" value={dashboard.data.totals.archived_projects} icon={Archive} />
                 <Stat label="Documents" value={dashboard.data.totals.documents} icon={FileText} />
                 <Stat label="Modules" value={dashboard.data.totals.modules} icon={Layers} />
+                <Stat label="Requirements" value={dashboard.data.totals.requirements} icon={ClipboardList} />
+                <Stat label="Approved requirements" value={dashboard.data.totals.approved_requirements} icon={CheckCircle2} />
               </>
             )}
           </section>
@@ -120,8 +125,8 @@ export default function DashboardPage() {
             <CardHeader>
               <CardTitle>QA modules on the roadmap</CardTitle>
               <CardDescription>
-                Test case, gap, bug and automation metrics appear here once those modules ship. Nothing below is
-                sample data.
+                Test case, gap, bug and automation metrics appear here once those modules ship. Nothing on this
+                dashboard is sample data.
               </CardDescription>
             </CardHeader>
             <CardContent>

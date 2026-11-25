@@ -35,7 +35,6 @@ export const NAV_ITEMS: NavItem[] = [
     href: "/requirement-analysis",
     label: "Requirement Analysis",
     icon: FileSearch,
-    phase: 2,
     summary: "Extract requirements, business rules and acceptance criteria from your documents with stable REQ IDs.",
   },
   {

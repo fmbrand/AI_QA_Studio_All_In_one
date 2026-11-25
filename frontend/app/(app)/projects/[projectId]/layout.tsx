@@ -14,7 +14,9 @@ import { cn, PLATFORM_LABELS } from "@/lib/utils";
 
 const TABS = [
   { segment: "", label: "Overview" },
+  { segment: "requirements", label: "Requirements" },
   { segment: "documents", label: "Documents" },
+  { segment: "knowledge", label: "Knowledge search" },
   { segment: "modules", label: "Modules" },
   { segment: "members", label: "Members" },
   { segment: "activity", label: "Activity" },
@@ -22,7 +24,6 @@ const TABS = [
 ];
 
 const UPCOMING = [
-  { label: "Requirements", phase: 2 },
   { label: "Figma designs", phase: 3 },
   { label: "Gap analysis", phase: 3 },
   { label: "Test cases", phase: 3 },
