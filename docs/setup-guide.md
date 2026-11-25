@@ -45,6 +45,18 @@ python scripts/devdb.py status
 python scripts/devdb.py stop
 ```
 
+**pgvector (required from Phase 2).** Semantic search needs the `vector` extension. Docker and CI images include it. Locally, if your PostgreSQL lacks it and you cannot install into it (Program Files needs admin rights on Windows), run the dev database from a private copy of the binaries instead:
+
+```bash
+python scripts/devdb.py stop
+python scripts/devdb.py make-private                    # copies bin/lib/share into backend/.pgsql (~150 MB, gitignored)
+# build pgvector (Windows: Visual Studio Build Tools; see the notes at the top of devdb.py), then:
+python scripts/devdb.py install-pgvector path/to/pgvector
+python scripts/devdb.py start                           # warns if pgvector is still missing
+```
+
+On Linux/macOS install your distribution's pgvector package (for example `postgresql-16-pgvector`, or `brew install pgvector`).
+
 To use your own PostgreSQL instead, create two databases and point `DATABASE_URL` and `TEST_DATABASE_URL` at them in `backend/.env`:
 
 ```
@@ -70,7 +82,17 @@ cd backend
 uv run python -m app.worker
 ```
 
-Without the worker, uploads stay "Queued". Several workers can run at once.
+Without the worker, uploads stay "Queued". Several workers can run at once. The first indexed upload downloads the embedding model (about 130 MB) to `EMBEDDING_CACHE_DIR` or the system temp folder.
+
+### AI and OCR (optional)
+
+- **Language model.** Requirement extraction is off until you set `LLM_PROVIDER` in `backend/.env` and restart the API and worker:
+  - Claude: `LLM_PROVIDER=anthropic` and `ANTHROPIC_API_KEY=...` (or leave the key empty and sign in with `ant auth login`). Default model `claude-opus-5-5`, effort `high`.
+  - OpenAI: `LLM_PROVIDER=openai`, `OPENAI_API_KEY`, `OPENAI_MODEL`.
+  - Ollama (free, local): `LLM_PROVIDER=ollama`, `OLLAMA_MODEL` (and `OLLAMA_BASE_URL` if not the default).
+  Everything else (upload, indexing, search, manual requirements) works without a model.
+- **OCR.** Install Tesseract to read scanned PDF pages and images: `winget install UB-Mannheim.TesseractOCR` (admin), `apt install tesseract-ocr`, or `brew install tesseract`. It is detected automatically; set `TESSERACT_CMD` if it is not on PATH. Then use **Reprocess** on documents uploaded earlier.
+- **AI evals** (spend real tokens): `LLM_PROVIDER=anthropic uv run python scripts/run_evals.py`.
 
 ### Frontend
 
@@ -101,6 +123,15 @@ Backend (`backend/.env`, or the root `.env` for Compose):
 | `MAX_UPLOAD_MB` | `25` | Per-file upload limit |
 | `MAX_FAILED_LOGINS` / `LOCKOUT_MINUTES` | `10` / `15` | Account lockout |
 | `LOGIN_RATE_LIMIT_PER_MINUTE` | `5` | Per IP and per email |
+| `LLM_PROVIDER` | `none` | `anthropic`, `openai`, `ollama`, or `none` (AI off) |
+| `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` / `ANTHROPIC_EFFORT` | empty / `claude-opus-5-5` / `high` | Claude settings |
+| `OPENAI_API_KEY` / `OPENAI_MODEL` | empty | OpenAI settings |
+| `OLLAMA_BASE_URL` / `OLLAMA_MODEL` | `http://localhost:11434/v1` / empty | Local model settings |
+| `EMBEDDING_PROVIDER` / `EMBEDDING_MODEL` | `fastembed` / `BAAI/bge-small-en-v1.5` | Local embeddings (384 dimensions; `hash` is test-only) |
+| `EMBEDDING_CACHE_DIR` | system temp | Where the embedding model is stored |
+| `TESSERACT_CMD` / `OCR_LANGUAGES` | auto / `eng` | OCR binary and languages |
+| `CHUNK_SIZE_CHARS` / `CHUNK_OVERLAP_CHARS` | `1200` / `200` | Passage size for indexing |
+| `EXTRACTION_WINDOW_CHARS` | `24000` | Source text per model call during extraction |
 
 Frontend (`frontend/.env.local`): `NEXT_PUBLIC_API_URL` (default `http://localhost:8000`) and `NEXT_PUBLIC_MAX_UPLOAD_MB`. Never put secrets in `NEXT_PUBLIC_*` variables.
 
@@ -133,3 +164,6 @@ Locally Playwright reuses the servers you started. In CI (`CI=true`) it starts t
 | Signed out after every reload | The browser blocks the refresh cookie. Web and API must be same-site (for example both on `localhost`), and `COOKIE_SECURE=true` requires HTTPS |
 | `devdb.py` cannot find `initdb` | Set `PG_BIN` to the PostgreSQL `bin` directory |
 | Port 5434 already in use | Set `DEVDB_PORT` and update `DATABASE_URL` / `TEST_DATABASE_URL` |
+| Migration fails with `extension "vector" is not available` | Install pgvector (see Database above) |
+| "Extract with AI" is disabled | No language model is configured; set `LLM_PROVIDER` and restart API and worker |
+| Documents show "No text found" | Scanned pages or images without OCR: install Tesseract, then Reprocess |

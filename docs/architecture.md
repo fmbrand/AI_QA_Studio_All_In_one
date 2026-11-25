@@ -54,7 +54,42 @@ Roles are per project: Owner (40) > Admin (30) > QA Engineer (20) > Viewer (10).
 
 The `jobs` table is the queue. The worker claims the oldest queued job with `FOR UPDATE SKIP LOCKED`, so any number of workers can run. A handler failure is retried up to 3 attempts; a `JobError` fails immediately with a user-facing message. Jobs left running by a crashed worker are re-queued after 10 minutes. This replaces the Redis/arq queue in the blueprint: one less service, and jobs survive restarts.
 
-Phase 1 has one job, `document_ingest`: plain text, Markdown, CSV and JSON are extracted into `document_extractions`; PDF, DOCX, XLSX and images are stored and marked `stored` until the Phase 2 parsers exist.
+Handlers receive a `report(stage, progress)` callback that writes progress through its own short session, so the UI sees progress without the handler committing unfinished work. Failures are classified: corrupt files, bad requests and model refusals fail at once; rate limits, outages and unexpected errors are retried. The worker loop waits and retries when the database is unreachable instead of exiting.
+
+Jobs: `document_ingest` (parse, chunk, embed, index) and `requirement_extraction` (AI extraction).
+
+## Context engine (Phase 2)
+
+```mermaid
+flowchart LR
+  Upload[Document version] --> Parse[Parse: PDF, DOCX, XLSX, CSV, JSON, text, images]
+  Parse -- scanned pages / images --> OCR[Tesseract OCR, optional]
+  Parse --> Chunk[Chunks with page/sheet and exact char offsets]
+  Chunk --> Embed[fastembed bge-small, 384-d]
+  Embed --> Store[(context_chunks: pgvector + tsvector)]
+  Store --> Search[Hybrid search: cosine + full text, RRF]
+  Store --> Extract[Requirement extraction]
+  Extract --> LLM[LLM provider: Claude / OpenAI / Ollama]
+  LLM --> Ground[Grounding: every citation must match the source]
+  Ground --> Drafts[Draft requirements with source refs]
+```
+
+The `ai_engine` package (next to `app`) holds everything that does not touch the database: parsers, OCR, chunking, embeddings, LLM providers, versioned prompts and grounding. App services call it and persist results.
+
+- **Parsing.** Each parser returns the full text plus segments mapping character ranges to a PDF page or spreadsheet sheet. PDF pages with almost no text are treated as scanned and sent to Tesseract when it is installed; otherwise a warning is stored and shown. Corrupt files fail the job immediately.
+- **Chunking.** About 1,200 characters with 200 overlap, ending at paragraph, line or sentence breaks, never crossing a page or sheet. Every chunk stores `char_start`/`char_end` into the extraction text, which is what citations point at.
+- **Embeddings.** Local fastembed (`BAAI/bge-small-en-v1.5`, 384 dimensions), so no document text leaves the server for indexing. A hash embedder exists for tests and is refused in production.
+- **Search.** Two candidate lists (pgvector cosine with an HNSW index, and PostgreSQL `websearch_to_tsquery` full text) merged with reciprocal rank fusion. Only current versions of non-deleted documents of the caller's project are searched. A module filter adds its connected modules and documents without a module.
+
+## AI layer and requirement extraction
+
+- **Providers.** One interface, `complete_json(system, user, schema)`. Claude uses the Anthropic SDK with JSON-schema structured output, adaptive thinking with explicit effort, prompt caching on the system prompt, and the server-side refusal fallback (`fallbacks: "default"`). OpenAI and Ollama use the OpenAI SDK with strict JSON schema. `LLM_PROVIDER=none` turns AI off; the API answers 503 `ai_not_configured` and the UI explains it.
+- **Prompts** live in `ai_engine/prompts/` with a `VERSION`; the app registers each version with a hash of the template and schema in `ai_prompt_versions`, and every call is logged in `ai_generations` (provider, model, prompt version, tokens, latency, retrieved chunk ids, outcome).
+- **Prompt-injection defence.** Uploaded text is wrapped in `<source>` blocks and the system prompt states it is data, never instructions. The model has no tools. Output can only be draft requirements, never a status change. Engineer instructions travel in a separate, labelled block. The eval set includes an injection document.
+- **Grounding.** Each extracted requirement must cite a source id that was actually sent and a quote that really appears in it (whitespace and case tolerant). Citations that fail are dropped; requirements with no valid citation are discarded and counted. Saved source refs carry document, version, page/sheet and exact character offsets.
+- **Atomic runs.** All model calls for a run happen first; requirements are written only if every call succeeds. Invalid output gets one repair attempt. Duplicates are merged within a run and flagged (`possible_duplicate_of`) against existing requirements by embedding similarity ≥ 0.92.
+- **Requirements** have a stable per-project key (`REQ-001`, from `key_counters`, never reused) and immutable versions. Editing creates a new version and returns an approved requirement to draft, keeping `approved_version_id` on the last approved one.
+- **Evals.** `scripts/run_evals.py` runs the golden set in `evals/requirement_extraction` against a real model and fails below the recall and citation-validity thresholds or if forbidden (injected) content appears. CI runs it only when the `ANTHROPIC_API_KEY` secret exists.
 
 ## Uploads
 
@@ -83,3 +118,5 @@ Phase 1 has one job, `document_ingest`: plain text, Markdown, CSV and JSON are e
 | SSE job progress | Polling | Simpler; SSE when AI jobs need finer progress |
 | pnpm | npm | npm ships with Node; lockfile committed |
 | `organizations` table | Not created | Tenancy decision still open |
+| Human corrections to extracted context items (Phase 2) | Corrections happen on requirements (edit = new version); chunks are re-derived by reprocessing | Correcting raw chunks would diverge from the source file; requirements are the reviewed artifact |
+| AI document-type classification (Phase 2) | The uploader chooses the document type | Cheap, accurate, and avoids a model call per upload |

@@ -31,13 +31,14 @@ The live, complete reference is the OpenAPI schema served by the API: **http://l
 | 401 | `unauthorized`, `invalid_credentials`, `invalid_refresh_token` | Missing/invalid token or bad sign-in |
 | 403 | `forbidden`, `owner_required` | Member, but role too low |
 | 404 | `not_found`, `user_not_found` | Missing, or a project you are not a member of |
-| 409 | `project_archived`, `duplicate_document`, `email_taken`, `already_member`, `last_owner`, `module_exists`, `no_change` | Conflicts with current state |
+| 409 | `project_archived`, `duplicate_document`, `email_taken`, `already_member`, `last_owner`, `module_exists`, `no_change`, `documents_not_indexed`, `already_processing` | Conflicts with current state |
 | 412 / 428 | `version_conflict` / `precondition_required` | Concurrency check |
 | 413 | `file_too_large` | Over `MAX_UPLOAD_MB` |
 | 415 | `unsupported_file_type` | Extension not allowed, or content does not match it |
 | 422 | `validation_error`, `empty_file`, `invalid_json`, `unknown_modules` | Invalid input |
 | 423 | `account_locked` | Too many failed sign-ins |
 | 429 | `rate_limited` | Slow down; see `Retry-After` |
+| 503 | `ai_not_configured` | No language model is configured (`LLM_PROVIDER=none`) |
 
 ## Endpoints
 
@@ -88,13 +89,36 @@ Minimum role per project route in brackets.
 | --- | --- | --- |
 | POST | `/projects/{id}/documents` [QA Engineer] | Multipart: `file`, `kind?`, `title?`, `module_id?` → 201 `{document, job}` |
 | GET | `/projects/{id}/documents` [Viewer] | `?kind=&module_id=&q=&cursor=&limit=` |
-| GET | `/projects/{id}/documents/{doc_id}` [Viewer] | With all versions |
+| GET | `/projects/{id}/documents/{doc_id}` [Viewer] | With all versions and `index` (`chunk_count`, `char_count`, `pages`, `ocr_pages`, `warnings`) |
 | PATCH | `/projects/{id}/documents/{doc_id}` [QA Engineer] | `{title?, kind?, module_id?, clear_module?}` |
 | DELETE | `/projects/{id}/documents/{doc_id}` [QA Engineer] | Soft delete |
 | POST | `/projects/{id}/documents/{doc_id}/versions` [QA Engineer] | Multipart `file` → new version |
-| GET | `/projects/{id}/documents/{doc_id}/extractions` [Viewer] | Extracted text, newest version first |
+| GET | `/projects/{id}/documents/{doc_id}/extractions` [Viewer] | Extracted text and metadata (pages, OCR pages, warnings) |
+| POST | `/projects/{id}/documents/{doc_id}/reprocess` [QA Engineer] | Re-parse and re-index the current version → 202 job |
 | GET | `/projects/{id}/documents/{doc_id}/versions/{version_id}/download-url` [Viewer] | `{url, expires_in}` signed link |
 | GET | `/files/{token}` | Streams the file; token is short-lived and user-bound |
+
+### Context engine and AI
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET | `/ai/status` | Active language model, embedding model and OCR; never returns keys |
+| POST | `/projects/{id}/context/search` [Viewer] | `{query, module_ids?, expand_connected? = true, k? = 8}` → passages with document, version, page/sheet, char range, `score`, `similarity`, `lexical_rank` |
+
+### Requirements
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET | `/projects/{id}/requirements` [Viewer] | `?status=&type=&priority=&module_id=&q=&cursor=&limit=`; each item has `key`, `status`, `current` (latest version), `approved_version_no`, `possible_duplicate_key` |
+| POST | `/projects/{id}/requirements` [QA Engineer] | Manual: `{type, title, description?, module_id?, feature?, user_role?, priority?, acceptance_criteria?}` → 201, next `REQ-###`, draft |
+| GET | `/projects/{id}/requirements/{req_id}` [Viewer] | With every version; `ETag` = current version number |
+| PATCH | `/projects/{id}/requirements/{req_id}` [QA Engineer] | Requires `If-Match`. Any changed field creates a new version; `change_reason?`, `clear_module?`. An approved requirement returns to draft |
+| POST | `/projects/{id}/requirements/{req_id}/approve` [QA Engineer] | Approves the current version |
+| POST | `/projects/{id}/requirements/{req_id}/reject` [QA Engineer] | `{reason?}` |
+| POST | `/projects/{id}/requirements/bulk-status` [QA Engineer] | `{requirement_ids, status: approved\|rejected, reason?}` → `{changed, skipped}` |
+| DELETE | `/projects/{id}/requirements/{req_id}` [QA Engineer] | Soft delete; the key is never reused |
+| GET | `/projects/{id}/requirements/{req_id}/diff?from=1&to=2` [Viewer] | Changed fields and a unified diff of the description |
+| POST | `/projects/{id}/requirements/extract` [QA Engineer] | `{document_ids, instructions?}`, optional `Idempotency-Key` header → 202 job. Documents must be indexed. The job result reports `created`, `keys`, `discarded_uncited`, `merged_duplicates`, `possible_duplicates`, `open_questions` |
 
 ### Jobs, activity, dashboard, health
 
@@ -104,5 +128,5 @@ Minimum role per project route in brackets.
 | GET | `/jobs/{job_id}` | Visible to members of the job's project |
 | POST | `/jobs/{job_id}/cancel` | QA Engineer; queued jobs only |
 | GET | `/projects/{id}/activity` [Viewer] | Paginated audit trail with actor names |
-| GET | `/dashboard` | Totals, recent activity and jobs across your projects |
+| GET | `/dashboard` | Totals (including requirements and approved requirements), recent activity and jobs across your projects |
 | GET | `/health` | Database connectivity |

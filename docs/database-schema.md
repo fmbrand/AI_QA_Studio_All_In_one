@@ -1,4 +1,4 @@
-# Database schema (Phase 1)
+# Database schema (Phases 1–2)
 
 PostgreSQL, managed only through Alembic migrations (`backend/app/database/migrations`). UUID v7 primary keys, `created_at`/`updated_at` timestamps, foreign keys with explicit `ON DELETE` behaviour. CI runs `alembic check` to fail on drift between models and migrations.
 
@@ -18,6 +18,14 @@ erDiagram
   projects ||--o{ jobs : queues
   projects ||--o{ activity_logs : audits
   users ||--o{ activity_logs : acts
+  document_versions ||--o{ context_chunks : indexed_as
+  projects ||--o{ requirements : defines
+  requirements ||--o{ requirement_versions : versions
+  requirements |o--o| requirements : possible_duplicate_of
+  projects ||--o{ key_counters : numbers
+  ai_prompt_versions ||--o{ ai_generations : used_by
+  jobs ||--o{ ai_generations : runs
+  ai_generations |o--o{ requirement_versions : produced
 ```
 
 ## Tables
@@ -33,7 +41,13 @@ erDiagram
 | `module_connections` | Directed module graph | Unique pair; check `from <> to`; cascades when a module is deleted |
 | `uploaded_documents` | A document in a project | `kind` ∈ requirement, design, business_logic, api_spec, test_cases, screenshot, other; optional `module_id` (set null on module delete); `current_version_id`; `deleted_at` |
 | `document_versions` | Immutable file versions | Unique `(document_id, version)`; `sha256` indexed with `project_id` for duplicate detection; `storage_key`; `processing_status` ∈ queued, processing, processed, stored, failed |
-| `document_extractions` | Extracted text per version | `extractor`, `text`, `char_count`, `meta` (CSV rows/columns, truncation) |
+| `document_extractions` | Extracted text per version | `extractor`, `text`, `char_count`, `meta` (pages, `ocr_pages`, `warnings`, sheets, CSV columns). Citations point into `text` by character offsets |
+| `context_chunks` | Searchable passages (Phase 2) | `content`, `page` / `sheet`, `char_start` / `char_end` into the extraction text, `embedding vector(384)` (HNSW, cosine), generated `content_tsv` (GIN), `embedding_model` |
+| `requirements` | Stable requirement identity (Phase 2) | Unique `(project_id, key)` e.g. `REQ-001`; `status` ∈ draft, approved, rejected; `current_version_id` / `current_version_no`; `approved_version_id`; `possible_duplicate_of`; `reviewed_by/at`, `rejection_reason`; `deleted_at` |
+| `requirement_versions` | Immutable requirement revisions | Unique `(requirement_id, version)`; `type` (10 kinds), `title`, `description`, `module_id`, `feature`, `user_role`, `priority`, `acceptance_criteria` (JSON), `source_refs` (JSON: document, version, page/sheet, char range, quote), `origin` ∈ ai, manual, edit; `confidence`; `change_reason`; `ai_generation_id` |
+| `key_counters` | Per-project key sequences | Primary key `(project_id, scope)`; incremented atomically with `INSERT … ON CONFLICT … RETURNING`; values are never reused |
+| `ai_prompt_versions` | Prompt versions as shipped | Unique `(task, version, template_hash)` |
+| `ai_generations` | One row per model call | `task`, `prompt_version_id`, `provider`, `model`, `status` ∈ succeeded, failed, invalid_output; `attempt`, tokens, `latency_ms`, `error`, `provider_request_id`, `retrieved_chunk_ids` |
 | `jobs` | Background work and its queue | `status` ∈ queued, running, succeeded, failed, cancelled; `progress`, `stage`, `attempts`, `locked_at`; JSON `input` / `result` |
 | `activity_logs` | Append-only audit trail | `action`, `entity_type`, `entity_id`, `summary`, changed-field `before` / `after`, `request_id` |
 
@@ -43,13 +57,18 @@ erDiagram
 - `(status, created_at)` on jobs for the worker's claim query; `(status, created_at)` on projects.
 - `(project_id, sha256)` on document versions for duplicate detection.
 - Unique functional indexes on `lower(users.email)` and `(modules.project_id, lower(modules.name))`.
+- `context_chunks`: HNSW on `embedding` (`vector_cosine_ops`, m=16, ef_construction=64), GIN on `content_tsv`, `(project_id, document_version_id, chunk_index)`.
+- `requirements`: `(project_id, status)`, `(project_id, created_at)`; `requirement_versions`: `(project_id, module_id)`.
+
+The `vector` extension is created by migration `0002_context_engine`; the database must have pgvector installed (the `pgvector/pgvector` image does; locally see the setup guide).
 
 ## Deletion behaviour
 
 - Projects and documents are soft-deleted (`deleted_at`) and disappear from every query. A purge job (Phase 6) removes rows and files after 30 days.
 - Modules are hard-deleted; their connections cascade and documents keep existing without a module.
+- Requirements are soft-deleted; their keys stay reserved. Chunks and extractions of a version are replaced when it is reprocessed and removed with the document version.
 - Deleting a user cascades their memberships and tokens; activity rows keep `actor_id = NULL`.
 
 ## Coming in later phases
 
-Phase 2 adds `context_chunks` (pgvector embeddings), `requirements`, `requirement_versions` and `project_context`. Phase 3 adds design, gap, test case and bug tables; Phase 4 automation tables; Phase 5 `trace_links` and project snapshots. See the blueprint for the full model.
+Phase 3 adds design, gap, test case and bug tables; Phase 4 automation tables; Phase 5 `trace_links` and project snapshots. See the blueprint for the full model.
