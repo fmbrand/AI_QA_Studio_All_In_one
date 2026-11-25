@@ -122,7 +122,7 @@ npx playwright install chromium   # first time only
 npm run e2e
 ```
 
-Locally Playwright reuses the servers you started. In CI (`CI=true`) it starts them itself.
+Locally Playwright reuses the servers you started. In CI (`CI=true`) it starts the API and the web app itself; the worker always has to be started separately (the CI workflow runs it as a background step), otherwise uploads stay "Queued" and the upload test fails.
 
 ## Troubleshooting
 
