@@ -1,0 +1,41 @@
+name: AI evals
+
+# Runs the requirement-extraction golden set against a real model. It spends API credit, so it runs
+# only on demand or when the prompts or grounding code change, and only when a key is configured.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "backend/ai_engine/prompts/**"
+      - "backend/ai_engine/grounding.py"
+      - "backend/evals/**"
+
+permissions:
+  contents: read
+
+jobs:
+  requirement-extraction:
+    runs-on: ubuntu-latest
+    env:
+      LLM_PROVIDER: anthropic
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      HAS_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Skip when no key is configured
+        if: env.HAS_KEY != 'true'
+        working-directory: .
+        run: echo "::notice::Add the ANTHROPIC_API_KEY repository secret to run AI evals."
+      - uses: actions/checkout@v5
+        if: env.HAS_KEY == 'true'
+      - uses: astral-sh/setup-uv@v6
+        if: env.HAS_KEY == 'true'
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - name: Run golden set
+        if: env.HAS_KEY == 'true'
+        run: uv sync --frozen && uv run python scripts/run_evals.py
