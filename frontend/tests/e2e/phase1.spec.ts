@@ -72,7 +72,9 @@ test("register, create a project, add a module, upload a document and see it per
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill(password);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await page.goto("/projects");
+  // Wait for sign-in to finish before navigating; a full page load here would abort the request.
+  await expect(page).toHaveURL(/\/dashboard$/);
+  await page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Projects" }).click();
   await page.getByRole("link", { name: projectName }).click();
   await expect(page.getByText("Documents").first()).toBeVisible();
   await tab(page, "Documents");
