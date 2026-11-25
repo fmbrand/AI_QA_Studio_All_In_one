@@ -4,6 +4,8 @@ import logging
 import signal
 import time
 
+from sqlalchemy.exc import OperationalError
+
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.database.session import get_session_factory
@@ -29,14 +31,23 @@ def main() -> None:
     signal.signal(signal.SIGTERM, stop)
     log.info("worker started")
     last_recovery = 0.0
+    backoff = settings.worker_poll_seconds
     while not stopping:
-        if time.monotonic() - last_recovery > 60:
+        try:
+            if time.monotonic() - last_recovery > 60:
+                with factory() as db:
+                    if recovered := recover_stale(db):
+                        log.info("recovered %s stale job(s)", recovered)
+                last_recovery = time.monotonic()
             with factory() as db:
-                if recovered := recover_stale(db):
-                    log.info("recovered %s stale job(s)", recovered)
-            last_recovery = time.monotonic()
-        with factory() as db:
-            job_id = claim(db)
+                job_id = claim(db)
+        except OperationalError as exc:
+            # Database restarting or unreachable: wait and try again instead of exiting.
+            log.warning("database unavailable (%s); retrying in %.0fs", type(exc.orig).__name__, backoff)
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 30.0)
+            continue
+        backoff = settings.worker_poll_seconds
         if job_id is None:
             time.sleep(settings.worker_poll_seconds)
             continue
