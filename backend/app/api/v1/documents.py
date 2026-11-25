@@ -21,6 +21,7 @@ from app.schemas.documents import (
     DocumentUpdateIn,
     DownloadUrlOut,
     ExtractionOut,
+    JobOut,
     UploadOut,
 )
 from app.services import documents as svc
@@ -107,6 +108,14 @@ async def upload_version(
     finally:
         staged.cleanup()
     return ok({"document": svc.document_detail(db, access.project_id, document.id), "job": job})
+
+
+@router.post("/projects/{project_id}/documents/{document_id}/reprocess", response_model=Envelope[JobOut],
+             status_code=status.HTTP_202_ACCEPTED)  # fmt: skip
+def reprocess_document(document_id: uuid.UUID, access: Engineer, user: CurrentUser, db: DB) -> dict:
+    job = svc.reprocess(db, access, user, document_id)
+    db.commit()
+    return ok(job)
 
 
 @router.get("/projects/{project_id}/documents/{document_id}/extractions", response_model=Envelope[list[ExtractionOut]])

@@ -265,8 +265,56 @@ def list_documents(
 
 
 def document_detail(db: Session, project_id: uuid.UUID, document_id: uuid.UUID) -> dict[str, Any]:
+    from app.services.context import chunk_counts
+
     doc = get_document(db, project_id, document_id)
-    return to_out(doc, _versions(db, [doc.id])[doc.id], detail=True)
+    out = to_out(doc, _versions(db, [doc.id])[doc.id], detail=True)
+    index = None
+    if doc.current_version_id:
+        extraction = (
+            db.execute(
+                select(DocumentExtraction).where(DocumentExtraction.document_version_id == doc.current_version_id)
+            )
+            .scalars()
+            .first()
+        )
+        if extraction is not None:
+            index = {
+                "chunk_count": chunk_counts(db, [doc.current_version_id]).get(doc.current_version_id, 0),
+                "char_count": extraction.char_count,
+                "warnings": extraction.meta.get("warnings", []),
+                "ocr_pages": extraction.meta.get("ocr_pages", []),
+                "pages": extraction.meta.get("pages"),
+            }
+    out["index"] = index
+    return out
+
+
+def reprocess(db: Session, access: ProjectAccess, user: User, document_id: uuid.UUID) -> Job:
+    """Re-run parsing and indexing for the current version (after enabling OCR, or for Phase 1 uploads)."""
+    from app.services.context import clear_index
+
+    ensure_active(access)
+    doc = get_document(db, access.project_id, document_id)
+    version = db.get(DocumentVersion, doc.current_version_id) if doc.current_version_id else None
+    if version is None:
+        raise not_found("Document version")
+    if version.processing_status in ("queued", "processing"):
+        raise AppError(409, "already_processing", "This document is already being processed")
+    clear_index(db, version.id)
+    version.processing_status, version.processing_error = "queued", None
+    job = jobs.enqueue(db, INGEST_JOB, project_id=doc.project_id, created_by=user.id,
+                       payload={"document_version_id": str(version.id)})  # fmt: skip
+    activity.record(
+        db,
+        project_id=access.project_id,
+        actor_id=user.id,
+        action="document.reprocessed",
+        entity_type="document",
+        entity_id=doc.id,
+        summary=f"Reprocessed “{doc.title}”",
+    )
+    return job
 
 
 def update_document(

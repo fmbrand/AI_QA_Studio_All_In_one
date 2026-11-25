@@ -53,20 +53,22 @@ def test_csv_extraction_records_shape(owner: Api, project: dict[str, Any], sessi
     doc = upload(owner, pid, "cases.csv", b"id,title\n1,Login\n2,Logout\n").json()["data"]["document"]
     run_pending(session_factory)
     ext = owner.get(f"/api/v1/projects/{pid}/documents/{doc['id']}/extractions").json()["data"][0]
-    assert ext["meta"] == {"rows": 2, "columns": ["id", "title"]}
+    assert ext["meta"]["rows"] == 2 and ext["meta"]["columns"] == ["id", "title"]
+    # Each row becomes a self-describing line so a chunk keeps its column names.
+    assert ext["text"] == "id: 1 | title: Login\nid: 2 | title: Logout"
 
 
-def test_binary_formats_are_stored_not_faked(owner: Api, project: dict[str, Any], session_factory) -> None:  # type: ignore[no-untyped-def]
+def test_corrupt_binary_fails_without_retrying(owner: Api, project: dict[str, Any], session_factory) -> None:  # type: ignore[no-untyped-def]
     pid = project["id"]
-    pdf = upload(owner, pid, "spec.pdf", b"%PDF-1.4\n%fake but well-formed header\n").json()["data"]["document"]
+    pdf = upload(owner, pid, "spec.pdf", b"%PDF-1.4\n%header only, no objects\n").json()["data"]["document"]
     docx = upload(owner, pid, "spec.docx", docx_bytes()).json()["data"]["document"]
-    png = upload(owner, pid, "screen.png", b"\x89PNG\r\n\x1a\n" + b"\x00" * 32, kind="screenshot")
-    assert png.status_code == 201
     run_pending(session_factory)
     for d in (pdf, docx):
-        detail = owner.get(f"/api/v1/projects/{pid}/documents/{d['id']}").json()["data"]
-        assert detail["current_version"]["processing_status"] == "stored"
-        assert owner.get(f"/api/v1/projects/{pid}/documents/{d['id']}/extractions").json()["data"] == []
+        version = owner.get(f"/api/v1/projects/{pid}/documents/{d['id']}").json()["data"]["current_version"]
+        assert version["processing_status"] == "failed"
+        assert version["processing_error"].startswith("The file could not be read")
+    jobs = owner.get(f"/api/v1/projects/{pid}/jobs").json()["data"]
+    assert all(j["attempts"] == 1 for j in jobs)
 
 
 def test_rejects_unsupported_and_mismatched_files(owner: Api, project: dict[str, Any]) -> None:

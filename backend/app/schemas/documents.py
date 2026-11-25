@@ -35,8 +35,17 @@ class DocumentOut(BaseModel):
     version_count: int
 
 
+class DocumentIndexOut(BaseModel):
+    chunk_count: int
+    char_count: int
+    warnings: list[str]
+    ocr_pages: list[int]
+    pages: int | None = None
+
+
 class DocumentDetailOut(DocumentOut):
     versions: list[DocumentVersionOut]
+    index: DocumentIndexOut | None = None
 
 
 class DocumentUpdateIn(BaseModel):
@@ -101,6 +110,8 @@ class DashboardTotals(BaseModel):
     archived_projects: int
     documents: int
     modules: int
+    requirements: int
+    approved_requirements: int
 
 
 class DashboardOut(BaseModel):

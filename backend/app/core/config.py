@@ -4,7 +4,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _WEAK_SECRETS = {"", "change-me", "changeme", "secret"}
@@ -39,6 +39,30 @@ class Settings(BaseSettings):
     job_stale_minutes: int = 10
     job_max_attempts: int = 3
 
+    # AI: language model. "none" keeps AI features switched off (the app explains why).
+    llm_provider: Literal["none", "anthropic", "openai", "ollama"] = "none"
+    anthropic_api_key: SecretStr | None = None  # falls back to the SDK's own credential lookup
+    anthropic_model: str = "claude-opus-5-5"
+    anthropic_effort: Literal["low", "medium", "high", "xhigh", "max"] = "high"
+    openai_api_key: SecretStr | None = None
+    openai_model: str = ""
+    ollama_base_url: str = "http://localhost:11434/v1"
+    ollama_model: str = ""
+    llm_max_output_tokens: int = 16000
+    llm_timeout_seconds: float = 300.0
+
+    # AI: embeddings for semantic search. "hash" is a deterministic test double, refused in production.
+    embedding_provider: Literal["fastembed", "hash"] = "fastembed"
+    embedding_model: str = "BAAI/bge-small-en-v1.5"
+    embedding_cache_dir: Path | None = None
+
+    # Context engine
+    tesseract_cmd: str | None = None  # auto-detected when unset
+    ocr_languages: str = "eng"
+    chunk_size_chars: int = 1200
+    chunk_overlap_chars: int = 200
+    extraction_window_chars: int = 24000
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def _split_origins(cls, value: object) -> object:
@@ -49,6 +73,8 @@ class Settings(BaseSettings):
     def check_secrets(self) -> None:
         if self.environment == "production" and (self.jwt_secret in _WEAK_SECRETS or len(self.jwt_secret) < 32):
             raise RuntimeError("JWT_SECRET must be set to a random string of at least 32 characters")
+        if self.environment == "production" and self.embedding_provider == "hash":
+            raise RuntimeError("EMBEDDING_PROVIDER=hash is a test double and cannot be used in production")
 
     @property
     def effective_jwt_secret(self) -> str:

@@ -3,6 +3,9 @@
 Several workers can run at once: claiming uses FOR UPDATE SKIP LOCKED, so a job is taken by one
 worker only. Jobs left 'running' by a crashed worker are re-queued after JOB_STALE_MINUTES, up to
 JOB_MAX_ATTEMPTS attempts.
+
+Handlers receive (db, job, report). `report(stage, progress)` writes progress through its own short
+session, so the UI sees it immediately without committing the handler's unfinished work.
 """
 
 import logging
@@ -10,16 +13,20 @@ import traceback
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
-from sqlalchemy import select, text, update
+from sqlalchemy import text, update
 from sqlalchemy.orm import Session, sessionmaker
 
+from ai_engine.llm.base import LLMError
 from app.core.config import get_settings
+from app.core.errors import AppError
 from app.models import Job
 
 log = logging.getLogger("app.worker")
 
-Handler = Callable[[Session, Job], dict]
+Report = Callable[[str, int], None]
+Handler = Callable[[Session, Job, Report], dict[str, Any]]
 HANDLERS: dict[str, Handler] = {}
 
 
@@ -35,13 +42,17 @@ def handler(kind: str) -> Callable[[Handler], Handler]:
     return register
 
 
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
 def recover_stale(db: Session) -> int:
     settings = get_settings()
-    cutoff = datetime.now(UTC) - timedelta(minutes=settings.job_stale_minutes)
+    cutoff = _now() - timedelta(minutes=settings.job_stale_minutes)
     failed = db.execute(
         update(Job)
         .where(Job.status == "running", Job.locked_at < cutoff, Job.attempts >= settings.job_max_attempts)
-        .values(status="failed", error="The job stopped responding too many times", finished_at=func_now())
+        .values(status="failed", error="The job stopped responding too many times", finished_at=_now())
     ).rowcount
     requeued = db.execute(
         update(Job)
@@ -50,10 +61,6 @@ def recover_stale(db: Session) -> int:
     ).rowcount
     db.commit()
     return (failed or 0) + (requeued or 0)
-
-
-def func_now() -> datetime:
-    return datetime.now(UTC)
 
 
 def claim(db: Session) -> uuid.UUID | None:
@@ -74,6 +81,30 @@ def claim(db: Session) -> uuid.UUID | None:
     return row[0] if row else None
 
 
+def _reporter(session_factory: sessionmaker[Session], job_id: uuid.UUID) -> Report:
+    def report(stage: str, progress: int) -> None:
+        with session_factory() as s:
+            s.execute(
+                update(Job)
+                .where(Job.id == job_id)
+                .values(stage=stage[:120], progress=max(0, min(99, progress)), locked_at=_now())
+            )
+            s.commit()
+
+    return report
+
+
+def _classify(exc: BaseException) -> tuple[bool, str]:
+    """(retryable, message) for a handler failure."""
+    if isinstance(exc, JobError):
+        return False, str(exc)
+    if isinstance(exc, AppError):
+        return False, exc.detail
+    if isinstance(exc, LLMError):
+        return exc.retryable, str(exc)
+    return True, f"{type(exc).__name__}: {exc}"
+
+
 def run_job(session_factory: sessionmaker[Session], job_id: uuid.UUID) -> None:
     with session_factory() as db:
         job = db.get(Job, job_id)
@@ -83,20 +114,25 @@ def run_job(session_factory: sessionmaker[Session], job_id: uuid.UUID) -> None:
         try:
             if fn is None:
                 raise JobError(f"No handler for job kind '{job.kind}'")
-            result = fn(db, job)
+            result = fn(db, job, _reporter(session_factory, job_id))
+            job = db.get(Job, job_id)
+            assert job is not None
+            db.refresh(job)
             job.status, job.progress, job.stage = "succeeded", 100, "Done"
-            job.result, job.error, job.finished_at = result, None, datetime.now(UTC)
+            job.result, job.error, job.finished_at = result, None, _now()
             db.commit()
         except Exception as exc:
             db.rollback()
             job = db.get(Job, job_id)
             assert job is not None
-            retry = not isinstance(exc, JobError) and job.attempts < get_settings().job_max_attempts
+            db.refresh(job)
+            retryable, message = _classify(exc)
+            retry = retryable and job.attempts < get_settings().job_max_attempts
             if retry:
                 job.status, job.stage, job.locked_at = "queued", "Retrying after an error", None
             else:
-                job.status, job.stage, job.finished_at = "failed", "Failed", datetime.now(UTC)
-            job.error = str(exc) if isinstance(exc, JobError) else f"{type(exc).__name__}: {exc}"
+                job.status, job.stage, job.finished_at = "failed", "Failed", _now()
+            job.error = message
             on_fail = getattr(fn, "on_failure", None)
             if on_fail and not retry:
                 on_fail(db, job)
@@ -118,7 +154,3 @@ def run_pending(session_factory: sessionmaker[Session], max_jobs: int = 100) -> 
         run_job(session_factory, job_id)
         done += 1
     return done
-
-
-def queued_count(db: Session) -> int:
-    return len(db.execute(select(Job.id).where(Job.status == "queued")).all())

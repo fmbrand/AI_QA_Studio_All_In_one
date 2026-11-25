@@ -14,6 +14,7 @@ from app.repositories.access import get_project_access, member_project_ids
 from app.schemas.common import Envelope, ok
 from app.schemas.documents import ActivityOut, DashboardOut, JobOut
 from app.services import jobs as job_svc
+from app.services.requirements import counts as requirement_counts
 
 router = APIRouter(tags=["activity"])
 
@@ -91,6 +92,7 @@ def dashboard(user: CurrentUser, db: DB) -> dict:
         db.execute(select(Job).where(Job.project_id.in_(mine)).order_by(Job.created_at.desc()).limit(10)).scalars()
     )
     active, archived = status_counts.get("active", 0), status_counts.get("archived", 0)
+    reqs = requirement_counts(db, mine)
     return ok(
         {
             "totals": {
@@ -99,6 +101,8 @@ def dashboard(user: CurrentUser, db: DB) -> dict:
                 "archived_projects": archived,
                 "documents": documents,
                 "modules": modules,
+                "requirements": reqs["total"],
+                "approved_requirements": reqs["approved"],
             },
             "recent_activity": _with_actor_names(db, logs),
             "recent_jobs": recent_jobs,

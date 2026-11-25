@@ -145,6 +145,8 @@ def test_dashboard_counts_only_real_data_for_caller(owner: Api, outsider: Api) -
         "archived_projects": 0,
         "documents": 0,
         "modules": 0,
+        "requirements": 0,
+        "approved_requirements": 0,
     }
     a = create_project(owner, "A")
     create_project(owner, "B")
@@ -155,5 +157,8 @@ def test_dashboard_counts_only_real_data_for_caller(owner: Api, outsider: Api) -
     owner.post(f"/api/v1/projects/{b['id']}/modules", json={"name": "Search"})
     owner.post(f"/api/v1/projects/{b['id']}/archive")
     data = owner.get("/api/v1/dashboard").json()["data"]
-    assert data["totals"] == {"projects": 2, "active_projects": 1, "archived_projects": 1, "documents": 0, "modules": 1}
+    assert data["totals"] == {
+        "projects": 2, "active_projects": 1, "archived_projects": 1, "documents": 0, "modules": 1,
+        "requirements": 0, "approved_requirements": 0,
+    }  # fmt: skip
     assert all(item["project_id"] in {a["id"], b["id"]} for item in data["recent_activity"])

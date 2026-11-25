@@ -1,22 +1,13 @@
-"""Job handlers. Phase 1 has one: document ingest (plain-text extraction).
+"""Job handlers: document indexing and AI requirement extraction."""
 
-PDF, DOCX, XLSX and image parsing (with OCR) arrive with the Phase 2 context engine. Until then those
-files are stored and marked 'stored' rather than pretending to have been parsed.
-"""
-
-import csv
-import io
-import json
 import uuid
+from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.integrations.storage import get_storage
-from app.models import DocumentExtraction, DocumentVersion, Job
-from app.services.filetypes import TYPES
-from app.worker.runner import JobError, handler
-
-MAX_EXTRACT_CHARS = 2_000_000
+from app.models import DocumentVersion, Job
+from app.services import context, requirements
+from app.worker.runner import JobError, Report, handler
 
 
 def _version(db: Session, job: Job) -> DocumentVersion:
@@ -31,50 +22,19 @@ def _version(db: Session, job: Job) -> DocumentVersion:
 
 
 @handler("document_ingest")
-def ingest_document(db: Session, job: Job) -> dict:
+def ingest_document(db: Session, job: Job, report: Report) -> dict[str, Any]:
+    """Parse the file (with OCR where available), split it into passages, embed and index them."""
     version = _version(db, job)
     version.processing_status = "processing"
-    job.stage, job.progress = "Reading file", 20
-    db.flush()
-
-    ext = "." + version.storage_key.rsplit(".", 1)[-1].lower()
-    family = TYPES[ext].family if ext in TYPES else "binary"
-    if family not in {"text", "csv", "json"}:
-        version.processing_status = "stored"
-        return {"extracted": False, "reason": "Parsing for this file type arrives with the Phase 2 context engine"}
-
-    with get_storage().open(version.storage_key) as fh:
-        raw = fh.read()
     try:
-        content = raw.decode("utf-8-sig")
-    except UnicodeDecodeError as exc:
-        raise JobError("The file is not valid UTF-8 text") from exc
-
-    meta: dict[str, object] = {}
-    if family == "csv":
-        rows = list(csv.reader(io.StringIO(content)))
-        meta = {"rows": max(0, len(rows) - 1), "columns": rows[0] if rows else []}
-    elif family == "json":
-        meta = {"top_level_type": type(json.loads(content)).__name__}
-
-    truncated = len(content) > MAX_EXTRACT_CHARS
-    text = content[:MAX_EXTRACT_CHARS]
-    if truncated:
-        meta["truncated"] = True
-    job.stage, job.progress = "Saving extracted text", 80
-    db.add(
-        DocumentExtraction(
-            document_version_id=version.id,
-            project_id=version.project_id,
-            extractor=f"{family}_v1",
-            text=text,
-            char_count=len(text),
-            meta=meta,
-        )
-    )
-    version.processing_status = "processed"
+        result = context.index_version(db, version, report)
+    except ValueError as exc:  # unreadable or malformed file
+        raise JobError(f"The file could not be read: {exc}") from exc
     version.processing_error = None
-    return {"extracted": True, "char_count": len(text), **({"truncated": True} if truncated else {})}
+    # "processed" = text is searchable; "stored" = kept, but nothing could be read from it.
+    version.processing_status = "processed" if result.chunk_count else "stored"
+    return {"extracted": result.chunk_count > 0, "char_count": result.char_count, "chunks": result.chunk_count,
+            "warnings": result.warnings}  # fmt: skip
 
 
 def _mark_failed(db: Session, job: Job) -> None:
@@ -88,3 +48,8 @@ def _mark_failed(db: Session, job: Job) -> None:
 
 
 ingest_document.on_failure = _mark_failed  # type: ignore[attr-defined]
+
+
+@handler(requirements.EXTRACTION_JOB)
+def extract_requirements(db: Session, job: Job, report: Report) -> dict[str, Any]:
+    return requirements.run_extraction(db, job, report)

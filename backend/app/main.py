@@ -7,7 +7,7 @@ from fastapi import APIRouter, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
-from app.api.v1 import activity, auth, documents, modules, projects
+from app.api.v1 import activity, auth, documents, modules, projects, requirements
 from app.core.config import get_settings
 from app.core.context import request_id_var
 from app.core.errors import install_error_handlers
@@ -61,7 +61,7 @@ def create_app() -> FastAPI:
             conn.execute(text("SELECT 1"))
         return {"data": {"status": "ok", "database": "ok"}}
 
-    for module in (auth, projects, modules, documents, activity):
+    for module in (auth, projects, modules, documents, requirements, activity):
         api.include_router(module.router)
     app.include_router(api)
     return app

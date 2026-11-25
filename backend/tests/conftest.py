@@ -13,6 +13,9 @@ os.environ["DATABASE_URL"] = os.environ.get(
 )
 os.environ.setdefault("JWT_SECRET", "test-secret-that-is-long-enough-for-hs256-signing")
 os.environ.setdefault("MAX_UPLOAD_MB", "1")
+# Tests never download models or call real AI providers; individual tests install scripted fakes.
+os.environ["EMBEDDING_PROVIDER"] = "hash"
+os.environ["LLM_PROVIDER"] = "none"
 
 import pytest  # noqa: E402
 from alembic import command  # noqa: E402
@@ -24,6 +27,7 @@ from app.core.config import get_settings  # noqa: E402
 from app.core.ratelimit import login_limiter  # noqa: E402
 from app.database.session import get_engine, get_session_factory  # noqa: E402
 from app.integrations.storage import LocalStorage, set_storage  # noqa: E402
+from app.services import ai_runtime  # noqa: E402
 
 BACKEND = Path(__file__).resolve().parent.parent
 PASSWORD = "correct-horse-battery"
@@ -58,6 +62,7 @@ def clean_state(tmp_path: Path) -> Iterator[Path]:
         )
         conn.execute(text(f"TRUNCATE {', '.join(tables)} RESTART IDENTITY CASCADE"))
     login_limiter.reset()
+    ai_runtime.reset_overrides()
     storage_dir = tmp_path / "storage"
     set_storage(LocalStorage(storage_dir))
     yield storage_dir
